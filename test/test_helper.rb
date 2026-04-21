@@ -1,14 +1,34 @@
-# Configure Rails Environment
-ENV["RAILS_ENV"] = "test"
+# frozen_string_literal: true
 
-require_relative "../test/dummy/config/environment"
-ActiveRecord::Migrator.migrations_paths = [ File.expand_path("../test/dummy/db/migrate", __dir__) ]
-require "rails/test_help"
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "ragents"
+require "minitest/autorun"
 
-# Load fixtures from the engine
-if ActiveSupport::TestCase.respond_to?(:fixture_paths=)
-  ActiveSupport::TestCase.fixture_paths = [ File.expand_path("fixtures", __dir__) ]
-  ActionDispatch::IntegrationTest.fixture_paths = ActiveSupport::TestCase.fixture_paths
-  ActiveSupport::TestCase.file_fixture_path = File.expand_path("fixtures", __dir__) + "/files"
-  ActiveSupport::TestCase.fixtures :all
+# Test provider for use in tests
+module Ragents
+  module TestHelpers
+    def build_test_provider
+      Ragents::Providers::Test.new
+    end
+
+    def build_context(*messages)
+      Ragents::Context.new(messages: messages)
+    end
+
+    def user_message(content)
+      Ragents::Message.user(content)
+    end
+
+    def assistant_message(content, tool_calls: nil)
+      Ragents::Message.assistant(content, tool_calls: tool_calls)
+    end
+
+    def system_message(content)
+      Ragents::Message.system(content)
+    end
+  end
+end
+
+class Minitest::Test
+  include Ragents::TestHelpers
 end

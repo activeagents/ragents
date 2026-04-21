@@ -1,14 +1,15 @@
 source "https://rubygems.org"
 
-# Specify your gem's dependencies in ragents.gemspec.
+# Specify gem's dependencies in ragents.gemspec
 gemspec
 
-gem "puma"
+group :development, :test do
+  gem "rubocop", require: false
+  gem "rubocop-minitest", require: false
+  gem "debug", ">= 1.0.0"
+end
 
-gem "sqlite3"
-
-# Omakase Ruby styling [https://github.com/rails/rubocop-rails-omakase/]
-gem "rubocop-rails-omakase", require: false
-
-# Start debugger with binding.b [https://github.com/ruby/debug]
-# gem "debug", ">= 1.0.0"
+# Optional provider gems (for testing)
+group :test do
+  gem "vcr"
+end
