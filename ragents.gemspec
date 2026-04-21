@@ -16,7 +16,7 @@ Gem::Specification.new do |spec|
   spec.homepage    = "https://activeagents.ai"
   spec.license     = "MIT"
 
-  spec.required_ruby_version = ">= 3.2.0" # Ractors available in Ruby 3.x, optimized for 3.3+
+  spec.required_ruby_version = ">= 4.0.0" # Requires Ruby 4.0+ for Ractor improvements
 
   spec.metadata = {
     "bug_tracker_uri" => "https://github.com/activeagents/ragents/issues",
