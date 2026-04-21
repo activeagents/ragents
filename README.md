@@ -301,7 +301,7 @@ Ragents is designed to complement Active Agent - use Ragents for complex multi-a
 
 ## Requirements
 
-- Ruby >= 4.0.0 (required for Ractor improvements including local GC)
+- Ruby 4.0+ (4.1 recommended for latest Ractor improvements)
 - ruby_llm gem (automatically installed)
 
 ## Contributing
