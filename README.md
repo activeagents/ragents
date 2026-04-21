@@ -209,7 +209,7 @@ result = orchestrator.supervised(:researcher,
 
 ### Ractor-Based Parallelism
 
-Run agents in isolated Ractors:
+Run agents in isolated Ractors using Ruby 4.x APIs:
 
 ```ruby
 # Async execution
@@ -220,8 +220,8 @@ ractor = ResearchAgent.run_async(
 
 # Do other work while agent runs...
 
-# Get result when ready
-result = ractor.take
+# Get result when ready (Ruby 4.x uses #value instead of #take)
+result = ractor.value
 
 # Or use the synchronous helper
 result = ResearchAgent.run_in_ractor(

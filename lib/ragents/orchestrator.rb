@@ -74,8 +74,8 @@ module Ragents
         )
       end
 
-      # Collect results from all Ractors
-      ractors.map(&:take)
+      # Collect results from all Ractors (Ruby 4.x API)
+      ractors.map(&:value)
     end
 
     # Execute a sequential workflow

@@ -127,9 +127,10 @@ module Ragents
     end
 
     # Execute in Ractor and wait for result
+    # Uses Ruby 4.x Ractor#value (replaces deprecated #take)
     def self.run_in_ractor(provider:, context: nil, input: nil, **options)
       ractor = run_async(provider: provider, context: context, input: input, **options)
-      ractor.take
+      ractor.value
     end
 
     private
