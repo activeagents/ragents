@@ -26,7 +26,11 @@ jobs:
           bundle install --jobs 4
 
       - name: Lint code for consistent style
-        run: bin/rubocop -f github
+        run: |
+          # Surface RuboCop's own errors (config, plugins) as annotations too.
+          bin/rubocop -f github 2> rubocop-errors.txt || status=$?
+          grep -v '^\s*$' rubocop-errors.txt | head -20 | sed 's/^/::error title=rubocop::/' || true
+          exit ${status:-0}
 
   test:
     runs-on: ubuntu-latest
