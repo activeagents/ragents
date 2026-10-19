@@ -31,32 +31,61 @@ module Ragents
       @ractor = Ractor.new(boot, initial, name: name) do |boot_port, data|
         inbox = Ractor::Port.new
         boot_port << inbox
-        while (request = inbox.receive) != :stop
-          op, key, value, reply = request
+
+        # A failed reply must never stop the store: the caller may have given
+        # up (Timeout, Thread#kill) and closed its reply port, or the result
+        # may not be copyable.
+        answer = lambda do |reply, message|
+          reply << message
+        rescue Ractor::ClosedError
+          nil
+        rescue Exception => e # rubocop:disable Lint/RescueException -- see above
           begin
-            result =
-              case op
-              when :get then data[key]
-              when :put then data[key] = value
-              when :fetch then data.fetch(key, value)
-              when :append
-                list = (data[key] ||= [])
-                list << value
-                list.size
-              when :delete then data.delete(key)
-              when :update then data[key] = value.call(data[key])
-              when :keys then data.keys
-              when :to_h then data
-              when :clear
-                data.clear
-                nil
-              end
-            reply << [ :ok, result ]
-          rescue Exception => e # rubocop:disable Lint/RescueException -- keep the store alive and report to the caller
-            reply << [ :error, "#{e.class}: #{e.message}" ]
+            reply << [ :error, "can't send the result back: #{e.class}" ]
+          rescue Exception # rubocop:disable Lint/RescueException -- see above
+            nil
           end
         end
-        :stopped
+
+        while (request = inbox.receive) != :stop
+          op, key, value, reply = request
+          message =
+            begin
+              result =
+                case op
+                when :get then data[key]
+                when :put then data[key] = value
+                when :fetch then data.fetch(key, value)
+                when :append
+                  list = (data[key] ||= [])
+                  list << value
+                  list.size
+                when :delete then data.delete(key)
+                when :update then data[key] = value.call(data[key])
+                when :keys then data.keys
+                when :to_h then data
+                when :clear
+                  data.clear
+                  nil
+                end
+              [ :ok, result ]
+            rescue Exception => e # rubocop:disable Lint/RescueException -- keep the store alive and report to the caller
+              [ :error, (begin "#{e.class}: #{e.message}" rescue e.class.name.to_s end) ]
+            end
+          answer.call(reply, message)
+        end
+
+        # Refuse whatever was queued behind :stop instead of leaving those
+        # callers waiting; closing first makes later requests fail at send.
+        inbox.close
+        begin
+          loop do
+            leftover = inbox.receive
+            answer.call(leftover[3], [ :error, "store stopped" ]) if leftover.is_a?(Array)
+          end
+        rescue Ractor::ClosedError
+          :stopped
+        end
       end
       @port = boot.receive
       Ractor.make_shareable(self)
@@ -99,7 +128,11 @@ module Ragents
 
     def request(op, key = nil, value = nil)
       reply = Ractor::Port.new
-      @port << [ op, key, value, reply ]
+      begin
+        @port << [ op, key, value, reply ]
+      rescue Ractor::ClosedError
+        raise Error, "store stopped"
+      end
       status, result = reply.receive
       raise Error, result if status == :error
 
