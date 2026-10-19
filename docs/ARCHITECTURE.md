@@ -8,7 +8,7 @@ Ragents is a pure Ruby, Ractor-based AI agent framework designed for concurrent,
 
 1. **Ractor-First Concurrency**: Agents run in isolated Ractors for true parallelism and memory safety
 2. **Pure Ruby**: No Rails dependencies in core; optional adapters for framework integration
-3. **Message-Passing Architecture**: Agents communicate via immutable messages through Ractor pipes
+3. **Message-Passing Architecture**: Agents exchange immutable messages and contexts through Ractor ports
 4. **Tool-Based Actions**: Agents interact with the world through declarative tool definitions
 5. **RubyLLM Backend**: Single provider interface leveraging RubyLLM for 500+ models
 6. **Composable**: Agents can orchestrate other agents for complex workflows
@@ -145,31 +145,54 @@ results = orchestrator.parallel(
 )
 ```
 
-## Ruby 4.0 Ractor Features
+## Agents in Ractors (Ruby 4.0)
 
-Ragents requires Ruby 4.0+ to leverage critical Ractor improvements:
+### Three kinds of agent state
 
-### Local Garbage Collection
-- Each Ractor has its own GC, reducing stop-the-world pauses
-- Better memory isolation between agents
-- Improved performance for long-running agent workflows
+Ractors share only immutable values, and a non-main Ractor may only read a
+class instance variable whose value is shareable. Agent state splits cleanly
+along that line:
 
-### Shareable Objects
-These must be Ractor-shareable (frozen or specially marked):
-- Tool definitions
-- System prompts
-- Configuration
-- Messages and Context (frozen)
+| State | Where it lives | How it crosses Ractors |
+|---|---|---|
+| Definitions: system prompt, tool schemas, execute blocks | Class instance variables | Made shareable when the class is defined (`Ragents::Shareable`); read directly |
+| Conversation | `Ragents::Context` (frozen) | Passed in, handed back; a new turn is a new Context |
+| Shared mutable memory: facts, counters, scratchpads | `Ragents::Store`, owned by its own Ractor | Requests over a `Ractor::Port`; the Store object is shareable |
 
-### Message Passing
-Agents communicate via Ractor pipes:
-```ruby
-# Orchestrator sends to agent
-agent_ractor.send([:run, context])
+`system_prompt` keeps a frozen copy of a string, and a block as a
+`Ractor.shareable_proc` copy that keeps its `self`. A tool's `execute` block is
+shared with `self: nil` and re-bound to the tool with `instance_exec`, so it
+behaves as before on every Ractor. A block that writes outer variables or
+captures mutable objects can't be shared: the agent still runs on the main
+Ractor, `Agent.ractor_safe?` is false, and `run_async`/`Pool#submit` raise
+`Ragents::RactorSafetyError` listing why.
 
-# Agent responds
-result = agent_ractor.take
-```
+### Running agents
+
+- `Agent.run_async` / `run_in_ractor`: one Ractor per run, result read with
+  `Ractor#value`. Fine for one-off fan-out.
+- `Ragents::Pool`: long-lived worker Ractors fed through `Ractor::Port`s. One
+  dispatcher thread hands jobs to free worker slots; one collector thread
+  receives replies and passes each to its job's `Thread::Queue`. Callers only
+  ever wait on that queue, which yields to a Fiber scheduler. On Ruby 4.0,
+  `Ractor::Port#receive` blocks its whole thread even inside a non-blocking
+  Fiber (ruby/ruby#18819 proposes changing that), so waiting on a port directly
+  from a Falcon/Async request would stall every other request on the reactor.
+- `Orchestrator#parallel` uses a pool when given one.
+
+### Providers
+
+A provider is sent into each Ractor with the run. `Providers::OpenAICompatible`
+is frozen and shareable, so it is passed by reference, and it keeps its
+keep-alive connections in Ractor-local storage. `Providers::Test` is copied.
+`Providers::RubyLLM` keeps configuration in module state (`RubyLLM.config`),
+which non-main Ractors can't read, so it is main-Ractor only.
+
+### Garbage collection
+
+Ruby 4.0 still collects garbage with a VM-wide stop-the-world GC. Allocation
+in any Ractor pauses all of them, so allocation-heavy tool work scales less
+than CPU-only work.
 
 ## Integration Points
 
@@ -196,7 +219,8 @@ Rails.application.config.ragents.timeout = 180
 ## Error Handling
 
 - Agents can fail; Orchestrator handles supervision
-- Ractor exceptions are captured and re-raised safely
+- Errors inside a Ractor surface as `Ractor::RemoteError` (run_async) or
+  `Ragents::Pool::RemoteError` with the original exception as `cause`
 - Automatic restart with configurable max retries
 
 ## Future Considerations
