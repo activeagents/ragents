@@ -3,8 +3,8 @@ require_relative "lib/ragents/version"
 Gem::Specification.new do |spec|
   spec.name        = "ragents"
   spec.version     = Ragents::VERSION
-  spec.authors     = ["Justin Bowen"]
-  spec.email       = ["JusBowen@gmail.com"]
+  spec.authors     = [ "Justin Bowen" ]
+  spec.email       = [ "JusBowen@gmail.com" ]
 
   spec.summary     = "A Ractor-based concurrency library for AI agent interactions."
   spec.description = <<~DESC
@@ -26,7 +26,7 @@ Gem::Specification.new do |spec|
   }
 
   spec.files = Dir["CHANGELOG.md", "README.md", "MIT-LICENSE", "lib/**/*"]
-  spec.require_paths = ["lib"]
+  spec.require_paths = [ "lib" ]
 
   # Runtime dependencies
   spec.add_dependency "ruby_llm", ">= 1.0"

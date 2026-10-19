@@ -81,10 +81,10 @@ class FakeOpenAIServer
     elsif body["stream"]
       stream(socket, model, last_user)
     elsif (tool = Array(body["tools"]).first) && Array(body["messages"]).none? { |m| m["role"] == "tool" }
-      json(socket, 200, completion(model, { role: "assistant", content: nil, tool_calls: [{
+      json(socket, 200, completion(model, { role: "assistant", content: nil, tool_calls: [ {
         id: "call_1", type: "function",
         function: { name: tool.dig("function", "name"), arguments: JSON.generate(text: last_user) }
-      }] }, "tool_calls"))
+      } ] }, "tool_calls"))
     else
       json(socket, 200, completion(model, { role: "assistant", content: "echo: #{last_user}" }, "stop"))
     end
