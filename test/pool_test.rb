@@ -24,6 +24,13 @@ class PoolTest < Minitest::Test
       :counted
     end
     def self.with_options(text, upcase: false) = upcase ? text.upcase : text
+    def self.echo(value) = value
+    def self.quit = Thread.exit
+    def self.bad_message = raise(BadMessageError)
+  end
+
+  class BadMessageError < StandardError
+    def message = raise("no message for you")
   end
 
   def setup
@@ -108,11 +115,45 @@ class PoolTest < Minitest::Test
     assert_equal 0, @pool.stats[:running]
   end
 
-  def test_arguments_that_cannot_be_sent_fail_the_job_not_the_pool
-    error = assert_raises(Ragents::Pool::RemoteError) { @pool.call(Jobs, :add, Thread::Queue.new, 1) }
+  def test_arguments_that_cannot_be_sent_fail_in_the_caller
+    error = assert_raises(ArgumentError) { @pool.call(Jobs, :add, Thread::Queue.new, 1) }
 
-    assert_match(/can't send job to a worker Ractor/, error.message)
+    assert_match(/can't send the job's arguments to a worker Ractor/, error.message)
+    assert_equal 0, @pool.stats[:waiting]
     assert_equal 3, @pool.call(Jobs, :add, 1, 2)
+  end
+
+  def test_arguments_are_copied_when_submitted
+    pool = Ragents::Pool.new(size: 1, threads: 1)
+    busy = pool.send(:enqueue, :call, Jobs, [ :nap, 0.2 ], {})
+    text = String.new("first question")
+    job = pool.send(:enqueue, :call, Jobs, [ :echo, text ], {})
+    text.replace("SECOND question")
+
+    assert_equal "first question", job.value
+    busy.value
+  ensure
+    pool&.shutdown
+  end
+
+  def test_a_job_that_ends_its_thread_fails_without_losing_the_slot
+    pool = Ragents::Pool.new(size: 1, threads: 1)
+
+    error = assert_raises(Ragents::Pool::RemoteError) { pool.call(Jobs, :quit) }
+    assert_match(/worker thread exited/, error.message)
+    assert_equal 3, pool.call(Jobs, :add, 1, 2)
+  ensure
+    pool&.shutdown
+  end
+
+  def test_an_exception_with_a_broken_message_is_still_reported
+    pool = Ragents::Pool.new(size: 1, threads: 1)
+
+    error = assert_raises(Ragents::Pool::RemoteError) { pool.call(Jobs, :bad_message) }
+    assert_match(/BadMessageError/, error.message)
+    assert_equal 3, pool.call(Jobs, :add, 1, 2)
+  ensure
+    pool&.shutdown
   end
 
   def test_waiting_yields_to_other_fibers

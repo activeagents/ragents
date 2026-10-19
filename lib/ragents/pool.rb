@@ -32,6 +32,42 @@ module Ragents
     # Executes jobs inside the worker Ractors. Modules are shareable, so it is
     # referenced, never copied.
     module Worker
+      # Runs one job and always sends exactly one final reply for it.
+      def self.run(job, replies)
+        id, kind, target, args, kwargs = job
+        replied = false
+        emit = ->(value) { replies << [ :emit, id, value ] }
+        begin
+          result = perform(kind, target, args, kwargs, &emit)
+          # A Context is frozen by design, so it is shared rather than copied;
+          # other values are copied back.
+          replies << [ :ok, id, kind == :agent ? Ractor.make_shareable(result) : result ]
+          replied = true
+        rescue Exception => e # rubocop:disable Lint/RescueException -- report every failure to the caller
+          report_error(replies, id, e)
+          replied = true
+        ensure
+          # Thread.exit or Thread#kill inside the job skip the rescue.
+          replies << [ :error, id, [ "job ended without a result (its worker thread exited)", nil, nil ] ] unless replied
+        end
+      end
+
+      # The exception is copied back as the RemoteError's cause; copies lose
+      # their backtrace, so it travels alongside.
+      def self.report_error(replies, id, error)
+        message = begin
+          "#{error.class}: #{error.message}"
+        rescue Exception # rubocop:disable Lint/RescueException -- a broken #message must not lose the reply
+          error.class.name.to_s
+        end
+        backtrace = error.backtrace if error.respond_to?(:backtrace)
+        begin
+          replies << [ :error, id, [ message, error, backtrace ] ]
+        rescue Exception # rubocop:disable Lint/RescueException -- the exception itself couldn't be copied
+          replies << [ :error, id, [ message, nil, nil ] ]
+        end
+      end
+
       def self.perform(kind, target, args, kwargs, &emit)
         case kind
         when :agent
@@ -94,8 +130,8 @@ module Ragents
       raise ArgumentError, "size and threads must be positive" unless @size.positive? && @threads.positive?
 
       @replies = Ractor::Port.new
+      @staging = Ractor::Port.new
       @free = Thread::Queue.new
-      @pending = Thread::Queue.new
       @jobs = {}
       @slots = {}
       @lock = Mutex.new
@@ -107,29 +143,28 @@ module Ragents
         ractor = Ractor.new(@replies, boot, @threads, name: "#{name}-#{index}") do |replies, boot_port, nthreads|
           inbox = Ractor::Port.new
           boot_port << inbox
-          worker_threads = Array.new(nthreads) do
-            Thread.new do
-              while (job = inbox.receive) != :stop
-                id, kind, target, args, kwargs = job
-                emit = ->(value) { replies << [ :emit, id, value ] }
-                begin
-                  result = Worker.perform(kind, target, args, kwargs, &emit)
-                  # A Context is frozen by design, so it is shared rather than
-                  # copied; other values are copied back.
-                  replies << [ :ok, id, kind == :agent ? Ractor.make_shareable(result) : result ]
-                rescue Exception => e # rubocop:disable Lint/RescueException -- report every failure; a dead thread would lose its slot
-                  # The exception is copied back as the RemoteError's cause
-                  # (copies lose their backtrace, so it travels alongside).
-                  begin
-                    replies << [ :error, id, [ Pool.describe(e), e, e.backtrace ] ]
-                  rescue StandardError
-                    replies << [ :error, id, [ Pool.describe(e), nil, e.backtrace ] ]
-                  end
+          stopped = Thread::Queue.new
+          # Each worker thread serves jobs until it receives :stop. A job that
+          # ends its thread (Thread.exit, Thread#kill) is reported as failed and
+          # a replacement thread takes over, so the slot isn't lost.
+          serve = lambda do
+            stop = false
+            begin
+              until stop
+                job = inbox.receive
+                if job == :stop
+                  stop = true
+                else
+                  Worker.run(job, replies)
                 end
               end
+              stopped << true
+            ensure
+              Thread.new(&serve) unless stop
             end
           end
-          worker_threads.each(&:join)
+          nthreads.times { Thread.new(&serve) }
+          nthreads.times { stopped.pop }
           :stopped
         end
         [ ractor, boot.receive ]
@@ -171,7 +206,7 @@ module Ragents
 
         @closed = true
       end
-      @pending << :stop
+      @staging << :stop
       @dispatcher.join
       @workers.each { |_ractor, inbox| @threads.times { inbox << :stop } }
       @workers.each { |ractor, _inbox| ractor.join }
@@ -186,7 +221,9 @@ module Ragents
     def closed? = @closed
 
     def stats
-      @lock.synchronize { { size: @size, threads: @threads, running: @jobs.size, free_slots: @free.size, queued: @pending.size } }
+      @lock.synchronize do
+        { size: @size, threads: @threads, running: @slots.size, waiting: @jobs.size - @slots.size, free_slots: @free.size }
+      end
     end
 
     def self.describe(error)
@@ -200,23 +237,29 @@ module Ragents
       @lock.synchronize do
         raise ShutdownError, "pool is shut down" if @closed
 
-        @seq += 1
-        @jobs[@seq] = job
-        @pending << [ @seq, kind, target, args, kwargs ]
+        id = @seq += 1
+        begin
+          # Sending copies the arguments now, so changing them after
+          # submitting doesn't change the job, and arguments that can't
+          # enter a Ractor fail here, in the caller.
+          @staging << [ id, kind, target, args, kwargs ]
+        rescue StandardError => e
+          raise ArgumentError, "can't send the job's arguments to a worker Ractor (#{Pool.describe(e)})"
+        end
+        @jobs[id] = job
       end
       job
     end
 
-    # Hands queued jobs to free worker slots, so #submit never blocks.
+    # Hands staged jobs to free worker slots, so #submit never blocks.
     def dispatch
-      while (job = @pending.pop) != :stop
-        inbox = @free.pop
+      while (job = @staging.receive) != :stop
         id = job.first
+        inbox = @free.pop
         @lock.synchronize { @slots[id] = inbox }
         begin
-          inbox << job
+          inbox.send(job, move: true) # already a private copy: move it, don't copy again
         rescue StandardError => e
-          # The job's arguments couldn't be copied into the worker.
           finish(id, :error, [ "can't send job to a worker Ractor (#{Pool.describe(e)})", nil, nil ])
         end
       end
