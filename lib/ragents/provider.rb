@@ -148,3 +148,4 @@ end
 # Require provider implementations
 require_relative "providers/ruby_llm"
 require_relative "providers/test"
+require_relative "providers/open_ai_compatible"
