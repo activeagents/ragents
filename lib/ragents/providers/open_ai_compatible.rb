@@ -2,6 +2,7 @@
 
 require "json"
 require "net/http"
+require "openssl"
 require "uri"
 
 module Ragents
@@ -29,7 +30,12 @@ module Ragents
     class OpenAICompatible < Provider
       OPENAI_URL = "https://api.openai.com/v1"
       OPENROUTER_URL = "https://openrouter.ai/api/v1"
-      RETRYABLE = [ EOFError, IOError, Errno::ECONNRESET, Errno::EPIPE, Errno::ECONNABORTED ].freeze
+      # Errors from a kept-alive connection the server has since closed. Over
+      # TLS an abrupt close surfaces as an SSLError ("unexpected eof").
+      RETRYABLE = [ EOFError, IOError, Errno::ECONNRESET, Errno::EPIPE, Errno::ECONNABORTED, OpenSSL::SSL::SSLError ].freeze
+      # SSE events end with a blank line; servers may use \n, \r\n or \r.
+      EVENT_END = /\r\n\r\n|\n\n|\r\r/
+      LINE_END = /\r\n|\n|\r/
 
       # OpenRouter, with usage accounting on (responses report cost).
       def self.openrouter(model:, api_key: ENV["OPENROUTER_API_KEY"], **config)
@@ -52,7 +58,9 @@ module Ragents
               timeout: timeout, open_timeout: open_timeout, keep_alive: keep_alive, max_idle: max_idle)
         @model = @config[:model]
         @uri = URI.join(@config[:base_url].to_s.chomp("/") + "/", "chat/completions")
-        @pool_key = :"ragents_http_#{object_id}"
+        # Connections are pooled per endpoint, not per provider, so creating
+        # providers freely (one per API key, say) reuses the same sockets.
+        @pool_key = :"ragents_http #{@uri.scheme}://#{@uri.host}:#{@uri.port}"
         @config = Shareable.value(@config).first
         Ractor.make_shareable(self)
       end
@@ -149,14 +157,14 @@ module Ragents
           http.request(request) do |response|
             started = true
             check!(response, response.is_a?(Net::HTTPSuccess) ? nil : response.read_body)
-            buffer = +""
+            buffer = String.new(encoding: Encoding::BINARY)
             response.read_body do |chunk|
-              buffer << chunk
-              while (cut = buffer.index("\n\n"))
-                buffer.slice!(0, cut + 2).each_line do |line|
+              buffer << chunk.b
+              while (boundary = EVENT_END.match(buffer))
+                buffer.slice!(0, boundary.end(0)).split(LINE_END).each do |line|
                   next unless line.start_with?("data:")
 
-                  data = line.delete_prefix("data:").strip
+                  data = line.delete_prefix("data:").strip.force_encoding(Encoding::UTF_8)
                   next if data.empty? || data == "[DONE]"
 
                   event = JSON.parse(data)
@@ -184,7 +192,7 @@ module Ragents
         raise error.new(message, status_code: status, response_body: body)
       end
 
-      # Idle connections for this provider in the current Ractor.
+      # Idle connections to this endpoint in the current Ractor.
       def idle_connections
         Ractor.store_if_absent(@pool_key) { Thread::Queue.new }
       end
@@ -203,6 +211,8 @@ module Ragents
         end
 
         begin
+          # A pooled connection may have been opened by another provider.
+          http.read_timeout = @config[:timeout]
           result = yield http
         rescue *RETRYABLE
           http.finish rescue nil # rubocop:disable Style/RescueModifier

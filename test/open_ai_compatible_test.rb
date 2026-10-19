@@ -88,6 +88,34 @@ class OpenAICompatibleTest < Minitest::Test
     assert_equal 3, @server.connections
   end
 
+  def test_providers_share_connections_per_endpoint
+    20.times { |i| provider.generate(messages: [ { role: "user", content: i.to_s } ]) }
+
+    assert_equal 1, @server.connections
+  end
+
+  def test_streams_crlf_delimited_events
+    @server.stop
+    @server = FakeOpenAIServer.new(sse_newline: "\r\n")
+    deltas = []
+    response = provider.stream(messages: [ { role: "user", content: "one two three" } ]) { |d| deltas << d }
+
+    assert_equal [ "one ", "two ", "three " ], deltas
+    assert_equal 3, response.usage["completion_tokens"]
+  end
+
+  def test_streams_multibyte_text
+    deltas = []
+    @provider.stream(messages: [ { role: "user", content: "héllo wörld ✓" } ]) { |d| deltas << d }
+
+    assert_equal [ "héllo ", "wörld ", "✓ " ], deltas
+    assert(deltas.all? { |d| d.encoding == Encoding::UTF_8 && d.valid_encoding? })
+  end
+
+  def test_retries_tls_errors_on_reused_connections
+    assert_includes Ragents::Providers::OpenAICompatible::RETRYABLE, OpenSSL::SSL::SSLError
+  end
+
   def test_streams_text_deltas_and_usage
     deltas = []
     response = @provider.stream(messages: [ { role: "user", content: "one two three" } ]) { |d| deltas << d }

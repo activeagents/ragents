@@ -19,10 +19,13 @@ class FakeOpenAIServer
 
   # close_after_response: close each connection after one response without
   # saying so, to exercise stale keep-alive handling.
-  def initialize(close_after_response: false)
+  # sse_newline: line ending for SSE events ("\n" or "\r\n"); CRLF events are
+  # split across chunks to exercise buffering.
+  def initialize(close_after_response: false, sse_newline: "\n")
     @server = TCPServer.new("127.0.0.1", 0)
     @port = @server.addr[1]
     @close_after_response = close_after_response
+    @sse_newline = sse_newline
     @connections = 0
     @requests = Thread::Queue.new
     @thread = Thread.new { accept_loop }
@@ -106,8 +109,14 @@ class FakeOpenAIServer
     events = text.split.map { |word| { model: model, choices: [ { index: 0, delta: { content: "#{word} " } } ] } }
     events << { model: model, choices: [ { index: 0, delta: {}, finish_reason: "stop" } ] }
     events << { model: model, choices: [], usage: { prompt_tokens: 3, completion_tokens: events.size - 1 } }
-    events.each { |e| chunk(socket, "data: #{JSON.generate(e)}\n\n") }
-    chunk(socket, "data: [DONE]\n\n")
+    nl = @sse_newline
+    payloads = events.map { |e| "data: #{JSON.generate(e)}#{nl}#{nl}" } << "data: [DONE]#{nl}#{nl}"
+    if nl == "\n"
+      payloads.each { |p| chunk(socket, p) }
+    else
+      # Split mid-terminator ("...\r" | "\n\r\n") so the client must buffer.
+      payloads.join.scan(/.{1,7}/m).each { |piece| chunk(socket, piece) }
+    end
     socket.write "0\r\n\r\n"
   end
 
