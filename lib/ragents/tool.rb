@@ -18,12 +18,17 @@ module Ragents
   class Tool
     attr_reader :name, :description_text, :parameters, :executor
 
+    # Why this tool can't run inside a Ractor (nil when it can).
+    attr_reader :ractor_unsafe_reason
+
     def initialize(name, &block)
       @name = name.to_sym
       @description_text = nil
       @parameters = {}
       @executor = nil
+      @executor_call = :call
       @ractor_safe = true
+      @ractor_unsafe_reason = nil
 
       instance_eval(&block) if block_given?
 
@@ -56,16 +61,22 @@ module Ragents
     # DSL: Mark as requiring main thread (not Ractor-safe)
     def requires_main_thread!
       @ractor_safe = false
+      @ractor_unsafe_reason ||= "marked requires_main_thread!"
     end
 
+    # True when the tool (and its execute block) can be used from any Ractor.
     def ractor_safe?
-      @ractor_safe
+      @ractor_safe && @ractor_unsafe_reason.nil?
     end
 
     # Call the tool with arguments
     def call(**args)
       validated_args = validate_and_coerce_args(args)
-      @executor.call(**validated_args)
+      if @executor_call == :instance_exec
+        instance_exec(**validated_args, &@executor)
+      else
+        @executor.call(**validated_args)
+      end
     end
 
     # Generate JSON Schema for this tool (OpenAI function format)
@@ -107,11 +118,35 @@ module Ragents
       raise ArgumentError, "Tool must have an executor" if @executor.nil?
     end
 
+    # Make the whole tool Ractor-shareable, so agents that use it can be built
+    # inside any Ractor. The execute block is replaced by a shareable copy that
+    # still runs with the tool as self (see Ragents::Shareable). A tool whose
+    # block captures mutable state, or that is marked requires_main_thread!,
+    # stays usable on the main Ractor and records why it can't go further.
     def freeze_for_ractor!
       @name.freeze
-      @description_text&.freeze
+      @description_text = Shareable.value(@description_text).first
       @parameters.freeze
-      @parameters.each_value(&:freeze)
+      begin
+        # Parameters hold their own copies of defaults and enums, so this
+        # never freezes an object the caller still owns.
+        Ractor.make_shareable(@parameters)
+      rescue Ractor::Error, TypeError => e
+        @parameters.each_value(&:freeze)
+        @ractor_unsafe_reason ||= "a parameter can't be made shareable: #{e.message}"
+      end
+
+      if ractor_safe?
+        executor, how, reason = Shareable.block(@executor, owner: self)
+        if reason
+          @ractor_unsafe_reason = "execute block can't be shared: #{reason}"
+        else
+          @executor = executor
+          @executor_call = how
+        end
+      end
+
+      Ractor.make_shareable(self) if ractor_safe?
     end
 
     def validate_and_coerce_args(args)
@@ -148,8 +183,8 @@ module Ragents
         @type = type.to_sym
         @required = required
         @description = description
-        @default = default
-        @enum = enum
+        @default = Shareable.deep_dup(default)
+        @enum = Shareable.deep_dup(enum)
 
         validate_type!
       end
@@ -242,6 +277,15 @@ module Ragents
 
     def to_anthropic_schemas
       @tools.values.map(&:to_anthropic_schema)
+    end
+
+    def ractor_safe?
+      @tools.each_value.all?(&:ractor_safe?)
+    end
+
+    # @return [Array<String>] one line per tool that can't run in a Ractor
+    def ractor_unsafe_reasons
+      @tools.each_value.reject(&:ractor_safe?).map { |t| "tool :#{t.name} #{t.ractor_unsafe_reason}" }
     end
 
     def size

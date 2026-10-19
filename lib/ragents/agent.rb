@@ -24,14 +24,68 @@ module Ragents
       attr_reader :defined_system_prompt, :defined_tools
 
       # DSL: Define the system prompt for this agent
+      #
+      # The prompt is stored Ractor-shareable (see Ragents::Shareable): a
+      # string is kept as a frozen copy, and a block or lambda as a shareable
+      # copy that keeps its self. A block that captures mutable state still
+      # works on the main Ractor but keeps the agent out of Ractors.
       def system_prompt(prompt = nil, &block)
-        @defined_system_prompt = block_given? ? block : prompt
+        prompt = block if block_given?
+        @system_prompt_unsafe_reason = nil
+        @defined_system_prompt =
+          if prompt.is_a?(Proc)
+            shared, _how, reason = Shareable.block(prompt)
+            @system_prompt_unsafe_reason = "system_prompt block can't be shared: #{reason}" if reason
+            shared
+          else
+            shared, reason = Shareable.value(prompt)
+            @system_prompt_unsafe_reason = "system_prompt can't be shared: #{reason}" if reason
+            shared
+          end
       end
 
       # DSL: Define a tool for this agent
+      #
+      # The class's registry is replaced rather than mutated, so that once
+      # every tool is shareable the registry itself can be frozen and read
+      # from any Ractor.
       def tool(name, &block)
-        @defined_tools ||= ToolRegistry.new
-        @defined_tools.register(name, &block)
+        new_tool = Tool.new(name, &block)
+        registry = ToolRegistry.new
+        defined_tools&.each { |t| registry.register(t.name, t) }
+        registry.register(new_tool.name, new_tool)
+        @defined_tools = registry.ractor_safe? ? Ractor.make_shareable(registry) : registry
+        new_tool
+      end
+
+      # True when instances of this agent can be built and run inside a
+      # non-main Ractor (run_async, run_in_ractor, Orchestrator#parallel,
+      # Ragents::Pool).
+      def ractor_safe?
+        ractor_unsafe_reasons.empty?
+      end
+
+      # @return [Array<String>] what keeps this agent out of Ractors, if anything
+      def ractor_unsafe_reasons
+        ancestors.reverse.flat_map do |klass|
+          next [] unless klass.is_a?(Class) && klass <= Ragents::Agent
+
+          reasons = []
+          reason = klass.instance_variable_get(:@system_prompt_unsafe_reason)
+          reasons << "#{klass.name || klass.inspect}: #{reason}" if reason
+          tools = klass.defined_tools
+          tools&.ractor_unsafe_reasons&.each { |r| reasons << "#{klass.name || klass.inspect}: #{r}" }
+          reasons
+        end
+      end
+
+      # Raises RactorSafetyError (on the calling Ractor, before anything is
+      # spawned) when this agent can't run in a Ractor.
+      def ensure_ractor_safe!
+        reasons = ractor_unsafe_reasons
+        return if reasons.empty?
+
+        raise RactorSafetyError, "#{name || inspect} can't run inside a Ractor:\n  - #{reasons.join("\n  - ")}"
       end
 
       # Get all inherited tools
@@ -113,16 +167,31 @@ module Ragents
     end
 
     # Run the agent in a Ractor for isolated concurrent execution
+    #
+    # The provider is shared with the Ractor if it is shareable (see
+    # Providers::OpenAICompatible) and copied otherwise; a copied provider's
+    # state (e.g. a Test provider's stubs) is consumed in the copy.
+    #
     # @param input [String, nil] Optional user input
     # @return [Ractor] The running Ractor
+    # @raise [RactorSafetyError] if the agent's definition can't be shared
     def self.run_async(provider:, context: nil, input: nil, **options)
-      # Prepare Ractor-shareable data
+      ensure_ractor_safe!
       agent_class = self
       frozen_context = context&.freeze || Context.new.freeze
 
-      Ractor.new(agent_class, provider, frozen_context, input, options) do |klass, prov, ctx, inp, opts|
-        agent = klass.new(provider: prov, context: ctx, **opts)
-        agent.run(input: inp)
+      begin
+        Ractor.new(agent_class, provider, frozen_context, input, options) do |klass, prov, ctx, inp, opts|
+          agent = klass.new(provider: prov, context: ctx, **opts)
+          Ractor.make_shareable(agent.run(input: inp))
+        end
+      rescue StandardError => e
+        # Ractor.new raises here (on the caller) only when an argument can't be
+        # shared or copied into the new Ractor; the block's own errors surface
+        # later from Ractor#value.
+        raise RactorSafetyError, "can't send #{name || inspect}'s arguments into a Ractor (#{e.class}: #{e.message}). " \
+                                 "The provider (#{provider.class}) and options must be shareable or copyable; " \
+                                 "Providers::OpenAICompatible is shareable."
       end
     end
 

@@ -87,6 +87,7 @@ module Ragents
 end
 
 # Core components
+require_relative "ragents/shareable"
 require_relative "ragents/message"
 require_relative "ragents/context"
 require_relative "ragents/tool"
