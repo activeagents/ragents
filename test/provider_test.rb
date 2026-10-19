@@ -53,14 +53,14 @@ class ProviderTest < Minitest::Test
     response = provider.stream(messages: []) { |chunk| chunks << chunk }
 
     assert_equal "Hello", response.content
-    assert_equal ["H", "e", "l", "l", "o"], chunks
+    assert_equal [ "H", "e", "l", "l", "o" ], chunks
   end
 
   def test_test_provider_request_tracking
     provider = Ragents::Providers::Test.new
     provider.stub_response(content: "OK")
 
-    messages = [{ role: :user, content: "Test" }]
+    messages = [ { role: :user, content: "Test" } ]
     provider.generate(messages: messages, temperature: 0.5)
 
     assert_equal 1, provider.requests.size

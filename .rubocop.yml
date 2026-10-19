@@ -1,6 +1,13 @@
 # Omakase Ruby styling for Rails
 inherit_gem: { rubocop-rails-omakase: rubocop.yml }
 
+# RuboCop can't read a target from the gemspec's ">= 4.0" yet and would fall
+# back to parsing as Ruby 2.7 (rejecting endless methods). 3.4 would switch to
+# the Prism translation layer, whose parser34 file Ruby 4.0's Prism no longer
+# ships for rubocop-ast 1.46; 3.3 covers every syntax used here.
+AllCops:
+  TargetRubyVersion: 3.3
+
 # Overwrite or add rules to create your own house style
 #
 # # Use `[a, [b, c]]` not `[ a, [ b, c ] ]`

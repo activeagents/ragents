@@ -59,7 +59,7 @@ class ContextTest < Minitest::Test
   end
 
   def test_pending_tool_calls
-    tool_calls = [{ id: "call_1", name: "search", arguments: { query: "test" } }]
+    tool_calls = [ { id: "call_1", name: "search", arguments: { query: "test" } } ]
     ctx = Ragents::Context.new(messages: [
       user_message("Search for X"),
       assistant_message("Let me search", tool_calls: tool_calls)
@@ -93,7 +93,7 @@ class ContextTest < Minitest::Test
   end
 
   def test_to_a
-    ctx = Ragents::Context.new(messages: [user_message("Hello")])
+    ctx = Ragents::Context.new(messages: [ user_message("Hello") ])
     arr = ctx.to_a
 
     assert_equal 1, arr.size
@@ -110,7 +110,7 @@ class ContextTest < Minitest::Test
   end
 
   def test_fork
-    ctx = Ragents::Context.new(messages: [user_message("Hello")])
+    ctx = Ragents::Context.new(messages: [ user_message("Hello") ])
     forked = ctx.fork(branch: "experiment")
 
     assert_equal 1, forked.size
@@ -125,6 +125,6 @@ class ContextTest < Minitest::Test
     ])
 
     contents = ctx.map(&:content)
-    assert_equal ["A", "B"], contents
+    assert_equal [ "A", "B" ], contents
   end
 end

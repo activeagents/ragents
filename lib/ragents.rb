@@ -87,12 +87,15 @@ module Ragents
 end
 
 # Core components
+require_relative "ragents/shareable"
 require_relative "ragents/message"
 require_relative "ragents/context"
 require_relative "ragents/tool"
 require_relative "ragents/provider"
 require_relative "ragents/agent"
 require_relative "ragents/orchestrator"
+require_relative "ragents/pool"
+require_relative "ragents/store"
 
 # Optional Rails integration (only loaded if Rails is present)
 if defined?(Rails::Railtie)
