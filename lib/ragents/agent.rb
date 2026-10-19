@@ -21,40 +21,40 @@ module Ragents
   #
   class Agent
     class << self
+      # What the DSL defined, as defined: used on the main Ractor.
       attr_reader :defined_system_prompt, :defined_tools
+
+      # Frozen, shareable copies of the same definitions: used inside other
+      # Ractors, which may only read shareable class instance variables.
+      attr_reader :ractor_system_prompt, :ractor_tools
 
       # DSL: Define the system prompt for this agent
       #
-      # The prompt is stored Ractor-shareable (see Ragents::Shareable): a
-      # string is kept as a frozen copy, and a block or lambda as a shareable
-      # copy that keeps its self. A block that captures mutable state still
-      # works on the main Ractor but keeps the agent out of Ractors.
+      # Besides the prompt itself, a shareable copy is kept for other Ractors:
+      # a frozen copy of a string, or a Ractor.shareable_proc copy of a block
+      # that keeps its self. A block that captures mutable state has no copy;
+      # it works on the main Ractor and keeps the agent out of Ractors.
       def system_prompt(prompt = nil, &block)
-        prompt = block if block_given?
+        @defined_system_prompt = block_given? ? block : prompt
+        prompt = @defined_system_prompt
         @system_prompt_unsafe_reason = nil
-        @defined_system_prompt =
+        @ractor_system_prompt =
           if prompt.is_a?(Proc)
             shared, _how, reason = Shareable.block(prompt)
-            @system_prompt_unsafe_reason = "system_prompt block can't be shared: #{reason}" if reason
-            shared
+            @system_prompt_unsafe_reason = "system_prompt block can't be shared: #{reason}".freeze if reason
+            reason ? nil : shared
           else
             shared, reason = Shareable.value(prompt)
-            @system_prompt_unsafe_reason = "system_prompt can't be shared: #{reason}" if reason
-            shared
+            @system_prompt_unsafe_reason = "system_prompt can't be shared: #{reason}".freeze if reason
+            reason ? nil : shared
           end
       end
 
       # DSL: Define a tool for this agent
-      #
-      # The class's registry is replaced rather than mutated, so that once
-      # every tool is shareable the registry itself can be frozen and read
-      # from any Ractor.
       def tool(name, &block)
-        new_tool = Tool.new(name, &block)
-        registry = ToolRegistry.new
-        defined_tools&.each { |t| registry.register(t.name, t) }
-        registry.register(new_tool.name, new_tool)
-        @defined_tools = registry.ractor_safe? ? Ractor.make_shareable(registry) : registry
+        @defined_tools ||= ToolRegistry.new
+        new_tool = @defined_tools.register(name, &block)
+        refresh_ractor_tools!
         new_tool
       end
 
@@ -67,16 +67,16 @@ module Ragents
 
       # @return [Array<String>] what keeps this agent out of Ractors, if anything
       def ractor_unsafe_reasons
-        ancestors.reverse.flat_map do |klass|
-          next [] unless klass.is_a?(Class) && klass <= Ragents::Agent
+        # The system prompt isn't inherited (resolved_system_prompt reads only
+        # this class's), but tools are.
+        reasons = []
+        reasons << "#{agent_label(self)}: #{@system_prompt_unsafe_reason}" if @system_prompt_unsafe_reason
+        ancestors.reverse_each do |klass|
+          next unless klass.is_a?(Class) && klass <= Ragents::Agent
 
-          reasons = []
-          reason = klass.instance_variable_get(:@system_prompt_unsafe_reason)
-          reasons << "#{klass.name || klass.inspect}: #{reason}" if reason
-          tools = klass.defined_tools
-          tools&.ractor_unsafe_reasons&.each { |r| reasons << "#{klass.name || klass.inspect}: #{r}" }
-          reasons
+          klass.instance_variable_get(:@tool_unsafe_reasons)&.each { |r| reasons << "#{agent_label(klass)}: #{r}" }
         end
+        reasons
       end
 
       # Raises RactorSafetyError (on the calling Ractor, before anything is
@@ -88,15 +88,20 @@ module Ragents
         raise RactorSafetyError, "#{name || inspect} can't run inside a Ractor:\n  - #{reasons.join("\n  - ")}"
       end
 
-      # Get all inherited tools
+      # Get all inherited tools (their shareable copies inside other Ractors)
       def tools
+        on_main = Ractor.current.equal?(Ractor.main)
         registry = ToolRegistry.new
 
         # Collect tools from ancestors (inheritance chain)
         ancestors.reverse.each do |klass|
-          next unless klass.respond_to?(:defined_tools) && klass.defined_tools
+          next unless klass.respond_to?(:defined_tools)
 
-          klass.defined_tools.each { |t| registry.register(t.name, t) }
+          unless on_main || klass.instance_variable_get(:@tool_unsafe_reasons).nil?
+            raise RactorSafetyError, "#{agent_label(klass)} has tools that can't run inside a Ractor"
+          end
+
+          (on_main ? klass.defined_tools : klass.ractor_tools)&.each { |t| registry.register(t.name, t) }
         end
 
         registry
@@ -104,9 +109,34 @@ module Ragents
 
       # Get resolved system prompt
       def resolved_system_prompt
-        prompt = defined_system_prompt
+        prompt =
+          if Ractor.current.equal?(Ractor.main)
+            defined_system_prompt
+          else
+            raise RactorSafetyError, "#{agent_label(self)}: #{@system_prompt_unsafe_reason}" if @system_prompt_unsafe_reason
+
+            ractor_system_prompt
+          end
         prompt.is_a?(Proc) ? prompt.call : prompt
       end
+
+      private
+
+      # Keep the shareable registry in step with the defined one.
+      def refresh_ractor_tools!
+        reasons = @defined_tools.ractor_unsafe_reasons
+        if reasons.empty?
+          registry = ToolRegistry.new
+          @defined_tools.each { |t| registry.register(t.name, t.ractor_copy) }
+          @ractor_tools = Ractor.make_shareable(registry)
+          @tool_unsafe_reasons = nil
+        else
+          @ractor_tools = nil
+          @tool_unsafe_reasons = Ractor.make_shareable(reasons)
+        end
+      end
+
+      def agent_label(klass) = klass.name || klass.inspect
     end
 
     attr_reader :provider, :context, :tools, :options

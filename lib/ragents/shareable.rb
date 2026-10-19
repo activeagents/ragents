@@ -61,6 +61,27 @@ module Ragents
       [ callable, :call, e.message ]
     end
 
+    # Instance variables a block (or any block nested in it) assigns, read
+    # from its bytecode. A block that does this can't run on a frozen copy.
+    # Empty when the bytecode isn't available.
+    def ivar_writes(callable)
+      iseq = RubyVM::InstructionSequence.of(callable) if defined?(RubyVM::InstructionSequence)
+      return [] unless iseq
+
+      found = []
+      pending = [ iseq.to_a ]
+      until pending.empty?
+        node = pending.pop
+        next unless node.is_a?(Array)
+
+        found << node[1] if node[0] == :setinstancevariable
+        pending.concat(node)
+      end
+      found.uniq
+    rescue StandardError
+      []
+    end
+
     def deep_dup(object)
       case object
       when Hash then object.to_h { |k, v| [ deep_dup(k), deep_dup(v) ] }

@@ -60,10 +60,20 @@ class RactorSafetyTest < Minitest::Test
     assert_equal "echo:hi", context.messages[3].content
   end
 
-  def test_definitions_are_shareable
+  def test_ractors_get_shareable_copies_of_the_definitions
     assert_predicate EchoAgent, :ractor_safe?
-    assert Ractor.shareable?(EchoAgent.defined_tools)
-    assert Ractor.shareable?(LoudAgent.defined_system_prompt)
+    assert Ractor.shareable?(EchoAgent.ractor_tools)
+    assert Ractor.shareable?(LoudAgent.ractor_system_prompt)
+  end
+
+  def test_definitions_on_the_main_ractor_are_left_as_defined
+    tool = EchoAgent.defined_tools[:echo]
+
+    refute_predicate tool, :frozen?
+    refute Ractor.shareable?(tool.executor)
+    # Providers that call the execute block directly (e.g. RubyLLM) still get
+    # the tool as self.
+    assert_equal "echo:direct", tool.executor.call(text: "direct")
   end
 
   def test_unfrozen_prompt_string_is_copied_not_frozen
@@ -71,20 +81,74 @@ class RactorSafetyTest < Minitest::Test
     agent_class = Class.new(Ragents::Agent) { system_prompt prompt }
 
     refute_predicate prompt, :frozen?
-    assert Ractor.shareable?(agent_class.defined_system_prompt)
+    assert_same prompt, agent_class.defined_system_prompt
+    assert Ractor.shareable?(agent_class.ractor_system_prompt)
     assert_predicate agent_class, :ractor_safe?
   end
 
-  def test_parameter_defaults_are_copied_not_frozen
+  def test_parameter_defaults_keep_their_main_ractor_behaviour
     default_tags = [ "a" ]
     tool = Ragents::Tool.new(:tag) do
       parameter :tags, type: :array, default: default_tags
-      execute { |tags:| tags.join(",") }
+      execute { |tags:| (tags << "x").size }
     end
 
     refute_predicate default_tags, :frozen?
     assert_predicate tool, :ractor_safe?
-    assert_equal "a", tool.call
+    # On main the default object is shared across calls, as before.
+    assert_equal [ 2, 3 ], [ tool.call, tool.call ]
+    # The Ractor copy hands each call its own copy of the frozen default.
+    assert_equal [ 2, 2 ], [ tool.ractor_copy.call, tool.ractor_copy.call ]
+    assert_equal 2, Ractor.new(tool.ractor_copy) { |t| t.call }.value
+  end
+
+  def test_tools_that_keep_state_in_ivars_work_on_main_and_stay_out_of_ractors
+    agent_class = Class.new(Ragents::Agent) do
+      tool :lookup do
+        description "Memoized lookup"
+        parameter :key, type: :string, required: true
+        execute { |key:| (@cache ||= {})[key] ||= key.upcase }
+      end
+
+      tool :client do
+        @client = Struct.new(:lock).new(Mutex.new)
+        description "Uses a client object"
+        execute { @client.class.name.to_s }
+      end
+    end
+
+    assert_equal "A", agent_class.defined_tools[:lookup].call(key: "a")
+    refute_predicate agent_class, :ractor_safe?
+    reasons = agent_class.ractor_unsafe_reasons.join("\n")
+    assert_match(/tool :lookup execute block assigns @cache/, reasons)
+    assert_match(/tool :client keeps mutable state in @client/, reasons)
+  end
+
+  def test_tool_with_shareable_ivars_runs_in_a_ractor
+    agent_class = Class.new(Ragents::Agent) do
+      tool :prefixed do
+        @prefix = "pre"
+        description "Prefix the text"
+        parameter :text, type: :string, required: true
+        execute { |text:| "#{@prefix}-#{text}" }
+      end
+    end
+    @provider.stub_tool_call(name: :prefixed, arguments: { text: "x" })
+    @provider.stub_response(content: "done")
+
+    context = agent_class.run_in_ractor(provider: @provider, input: "go")
+    assert_equal "pre-x", context.messages.find(&:tool?).content
+  end
+
+  def test_subclass_prompt_is_judged_on_its_own
+    seen = []
+    parent = Class.new(Ragents::Agent) { system_prompt { "parent #{seen.size}" } }
+    child = Class.new(parent) { system_prompt "child prompt" }
+    @provider.stub_response(content: "ok")
+
+    refute_predicate parent, :ractor_safe?
+    assert_predicate child, :ractor_safe?
+    assert_equal "child prompt", child.run_in_ractor(provider: @provider, input: "go").system_message.content
   end
 
   def test_tool_capturing_mutable_state_stays_on_main_and_explains_why

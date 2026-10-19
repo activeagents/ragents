@@ -211,11 +211,13 @@ result = orchestrator.supervised(:researcher,
 
 ### Running Agents in Ractors
 
-Agent definitions are made Ractor-shareable when the class is defined, so any
-agent whose blocks don't capture mutable state can run in a Ractor. Use a
-provider that can cross into Ractors: `Providers::OpenAICompatible` is
-shareable. (`Providers::RubyLLM` keeps its configuration in module state that
-only the main Ractor can read.)
+When an agent class is defined, ragents also makes a frozen, shareable copy of
+its prompt and tools for other Ractors; the definitions themselves are left as
+they are. Any agent whose blocks don't keep mutable state (outer variables, or
+instance variables a tool assigns) can run in a Ractor. Use a provider that can
+cross into Ractors: `Providers::OpenAICompatible` is shareable.
+(`Providers::RubyLLM` keeps its configuration in module state that only the
+main Ractor can read.)
 
 ```ruby
 provider = Ragents::Providers::OpenAICompatible.new(model: "gpt-4o-mini") # OPENAI_API_KEY

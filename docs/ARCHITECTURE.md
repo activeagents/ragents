@@ -155,17 +155,26 @@ along that line:
 
 | State | Where it lives | How it crosses Ractors |
 |---|---|---|
-| Definitions: system prompt, tool schemas, execute blocks | Class instance variables | Made shareable when the class is defined (`Ragents::Shareable`); read directly |
+| Definitions: system prompt, tool schemas, execute blocks | Class instance variables | A frozen, shareable copy is made when the class is defined; other Ractors read the copies (`ractor_system_prompt`, `ractor_tools`) |
 | Conversation | `Ragents::Context` (frozen) | Passed in, handed back; a new turn is a new Context |
 | Shared mutable memory: facts, counters, scratchpads | `Ragents::Store`, owned by its own Ractor | Requests over a `Ractor::Port`; the Store object is shareable |
 
-`system_prompt` keeps a frozen copy of a string, and a block as a
-`Ractor.shareable_proc` copy that keeps its `self`. A tool's `execute` block is
-shared with `self: nil` and re-bound to the tool with `instance_exec`, so it
-behaves as before on every Ractor. A block that writes outer variables or
-captures mutable objects can't be shared: the agent still runs on the main
-Ractor, `Agent.ractor_safe?` is false, and `run_async`/`Pool#submit` raise
-`Ragents::RactorSafetyError` listing why.
+The definitions themselves are left exactly as defined, so agents behave the
+same on the main Ractor (tools can keep a cache, providers that call
+`tool.executor` directly see the tool as `self`). The copies for other Ractors:
+a frozen copy of a prompt string; a `Ractor.shareable_proc` copy of a prompt
+block that keeps its `self`; and for each tool, a frozen `Tool#ractor_copy`
+whose execute block is shared with `self: nil` and run with `instance_exec` on
+the copy, with its own copies of parameter defaults per call.
+
+A definition gets no copy when its block writes or captures mutable outer
+state, when a tool's execute block assigns instance variables (found from its
+bytecode; the copy is frozen), or when a tool's definition left mutable state
+in instance variables. That agent still runs on the main Ractor;
+`Agent.ractor_safe?` is false, and `run_async`/`Pool#submit` raise
+`Ragents::RactorSafetyError` listing why. Tools are inherited, so an unsafe
+parent tool keeps subclasses out too; system prompts aren't, so only the
+class's own prompt counts.
 
 ### Running agents
 
