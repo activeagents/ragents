@@ -62,7 +62,7 @@ module Ragents
           name: name,
           arguments: arguments
         )
-        stub_response(content: content, tool_calls: [tool_call], finish_reason: "tool_calls")
+        stub_response(content: content, tool_calls: [ tool_call ], finish_reason: "tool_calls")
         self
       end
 

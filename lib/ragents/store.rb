@@ -51,9 +51,9 @@ module Ragents
                 data.clear
                 nil
               end
-            reply << [:ok, result]
+            reply << [ :ok, result ]
           rescue Exception => e # rubocop:disable Lint/RescueException -- keep the store alive and report to the caller
-            reply << [:error, "#{e.class}: #{e.message}"]
+            reply << [ :error, "#{e.class}: #{e.message}" ]
           end
         end
         :stopped
@@ -99,7 +99,7 @@ module Ragents
 
     def request(op, key = nil, value = nil)
       reply = Ractor::Port.new
-      @port << [op, key, value, reply]
+      @port << [ op, key, value, reply ]
       status, result = reply.receive
       raise Error, result if status == :error
 

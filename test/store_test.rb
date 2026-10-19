@@ -29,7 +29,7 @@ class StoreTest < Minitest::Test
 
     writers = Array.new(4) do |w|
       Ractor.new(@store, w) do |store, id|
-        10.times { |i| store.append(:log, [id, i]) }
+        10.times { |i| store.append(:log, [ id, i ]) }
         store.update(:count) { |n| (n || 0) + 10 }
         :done
       end
@@ -38,20 +38,20 @@ class StoreTest < Minitest::Test
 
     log = @store.get(:log)
     assert_equal 40, log.size
-    assert_equal [0, 1, 2, 3], log.map(&:first).uniq.sort
+    assert_equal [ 0, 1, 2, 3 ], log.map(&:first).uniq.sort
     # Each writer's own entries arrive in its order.
     log.group_by(&:first).each_value { |entries| assert_equal (0..9).to_a, entries.map(&:last) }
     assert_equal 40, @store.get(:count)
   end
 
   def test_values_are_copied_in_and_out
-    list = ["a"]
+    list = [ "a" ]
     @store.put(:list, list)
     list << "b"
     copy = @store.get(:list)
     copy << "c"
 
-    assert_equal ["a"], @store.get(:list)
+    assert_equal [ "a" ], @store.get(:list)
   end
 
   def test_update_blocks_may_capture_shareable_values_only

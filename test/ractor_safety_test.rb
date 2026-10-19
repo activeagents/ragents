@@ -47,7 +47,7 @@ class RactorSafetyTest < Minitest::Test
     context = LoudAgent.run_in_ractor(provider: @provider, input: "go")
 
     assert_equal "I am RactorSafetyTest::LoudAgent", context.system_message.content
-    assert_equal ["HI", "echo:there"], context.messages.select(&:tool?).map(&:content)
+    assert_equal [ "HI", "echo:there" ], context.messages.select(&:tool?).map(&:content)
   end
 
   def test_definitions_behave_the_same_on_the_main_ractor
@@ -76,7 +76,7 @@ class RactorSafetyTest < Minitest::Test
   end
 
   def test_parameter_defaults_are_copied_not_frozen
-    default_tags = ["a"]
+    default_tags = [ "a" ]
     tool = Ragents::Tool.new(:tag) do
       parameter :tags, type: :array, default: default_tags
       execute { |tags:| tags.join(",") }
@@ -106,7 +106,7 @@ class RactorSafetyTest < Minitest::Test
     @provider.stub_tool_call(name: :record, arguments: { text: "kept" })
     @provider.stub_response(content: "ok")
     agent_class.new(provider: @provider).run(input: "go")
-    assert_equal ["kept"], calls
+    assert_equal [ "kept" ], calls
   end
 
   def test_requires_main_thread_keeps_an_agent_out_of_ractors
@@ -144,11 +144,11 @@ class RactorSafetyTest < Minitest::Test
 
     orchestrator = Ragents::Orchestrator.new(provider: @provider)
     orchestrator.register(:echo, EchoAgent)
-    results = orchestrator.parallel([:echo, { input: "a" }], [:echo, { input: "b" }])
+    results = orchestrator.parallel([ :echo, { input: "a" } ], [ :echo, { input: "b" } ])
 
     # The Test provider is copied into each Ractor, so each run sees all stubs.
-    assert_equal ["done", "done"], results.map { |c| c.last_message.content }
-    assert_equal ["echo:x", "echo:x"], results.map { |c| c.messages[3].content }
+    assert_equal [ "done", "done" ], results.map { |c| c.last_message.content }
+    assert_equal [ "echo:x", "echo:x" ], results.map { |c| c.messages[3].content }
   end
 
   def setup

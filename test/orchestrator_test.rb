@@ -87,7 +87,7 @@ class OrchestratorTest < Minitest::Test
   def test_context_storage
     orchestrator = Ragents::Orchestrator.new(provider: @provider)
 
-    ctx = Ragents::Context.new(messages: [user_message("Hello")])
+    ctx = Ragents::Context.new(messages: [ user_message("Hello") ])
     orchestrator.store_context(:session1, ctx)
 
     retrieved = orchestrator.fetch_context(:session1)

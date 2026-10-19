@@ -29,7 +29,7 @@ module Ragents
     class OpenAICompatible < Provider
       OPENAI_URL = "https://api.openai.com/v1"
       OPENROUTER_URL = "https://openrouter.ai/api/v1"
-      RETRYABLE = [EOFError, IOError, Errno::ECONNRESET, Errno::EPIPE, Errno::ECONNABORTED].freeze
+      RETRYABLE = [ EOFError, IOError, Errno::ECONNRESET, Errno::EPIPE, Errno::ECONNABORTED ].freeze
 
       # OpenRouter, with usage accounting on (responses report cost).
       def self.openrouter(model:, api_key: ENV["OPENROUTER_API_KEY"], **config)
@@ -175,11 +175,12 @@ module Ragents
 
         status = response.code.to_i
         message = "HTTP #{status}: #{body.to_s[0, 300]}"
-        error = case status
-                when 401, 403 then AuthenticationError
-                when 429 then RateLimitError
-                else APIError
-                end
+        error =
+          case status
+          when 401, 403 then AuthenticationError
+          when 429 then RateLimitError
+          else APIError
+          end
         raise error.new(message, status_code: status, response_body: body)
       end
 

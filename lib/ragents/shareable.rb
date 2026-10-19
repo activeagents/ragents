@@ -29,11 +29,11 @@ module Ragents
     # @return [Array(Object, String, nil)] the shareable value (or the original
     #   when it can't be shared) and the reason it can't, if any
     def value(object)
-      return [object, nil] if Ractor.shareable?(object)
+      return [ object, nil ] if Ractor.shareable?(object)
 
-      [Ractor.make_shareable(deep_dup(object)), nil]
+      [ Ractor.make_shareable(deep_dup(object)), nil ]
     rescue Ractor::Error, TypeError, ArgumentError => e
-      [object, e.message]
+      [ object, e.message ]
     end
 
     # @param owner [Object, nil] the object the block is defined on; when the
@@ -42,28 +42,28 @@ module Ragents
     # @return [Array(Proc, Symbol, String, nil)] the proc, how to call it
     #   (:call or :instance_exec), and the reason it can't be shared, if any
     def block(callable, owner: nil)
-      return [callable, :call, nil] if Ractor.shareable?(callable)
+      return [ callable, :call, nil ] if Ractor.shareable?(callable)
 
       receiver = begin
         callable.binding.receiver
       rescue ArgumentError
-        return [callable, :call, "it has no inspectable binding (a method or C-level proc)"]
+        return [ callable, :call, "it has no inspectable binding (a method or C-level proc)" ]
       end
 
       if !owner.nil? && receiver.equal?(owner)
-        [Ractor.shareable_proc(self: nil, &callable), :instance_exec, nil]
+        [ Ractor.shareable_proc(self: nil, &callable), :instance_exec, nil ]
       elsif Ractor.shareable?(receiver)
-        [Ractor.shareable_proc(self: receiver, &callable), :call, nil]
+        [ Ractor.shareable_proc(self: receiver, &callable), :call, nil ]
       else
-        [callable, :call, "its self (#{receiver.class}) is not shareable"]
+        [ callable, :call, "its self (#{receiver.class}) is not shareable" ]
       end
     rescue Ractor::Error, ArgumentError => e
-      [callable, :call, e.message]
+      [ callable, :call, e.message ]
     end
 
     def deep_dup(object)
       case object
-      when Hash then object.to_h { |k, v| [deep_dup(k), deep_dup(v)] }
+      when Hash then object.to_h { |k, v| [ deep_dup(k), deep_dup(v) ] }
       when Array then object.map { |v| deep_dup(v) }
       when String then object.frozen? ? object : object.dup
       else object

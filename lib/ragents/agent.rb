@@ -209,7 +209,7 @@ module Ragents
       return unless system && @context.system_message.nil?
 
       @context = Context.new(
-        messages: [Message.system(system)] + @context.messages.to_a,
+        messages: [ Message.system(system) ] + @context.messages.to_a,
         metadata: @context.metadata
       )
     end

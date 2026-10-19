@@ -25,7 +25,7 @@ module Ragents
     def add_message(message)
       message = ensure_message(message)
       self.class.new(
-        messages: @messages + [message],
+        messages: @messages + [ message ],
         metadata: @metadata
       )
     end
@@ -133,7 +133,7 @@ module Ragents
       kept = other_messages.last(keep_system && system_msg ? max_messages - 1 : max_messages)
 
       self.class.new(
-        messages: system_msg ? [system_msg] + kept : kept,
+        messages: system_msg ? [ system_msg ] + kept : kept,
         metadata: @metadata
       )
     end

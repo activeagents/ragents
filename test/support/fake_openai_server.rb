@@ -92,7 +92,7 @@ class FakeOpenAIServer
 
   def completion(model, message, finish_reason)
     { id: "chatcmpl-fake", object: "chat.completion", model: model,
-      choices: [{ index: 0, message: message, finish_reason: finish_reason }],
+      choices: [ { index: 0, message: message, finish_reason: finish_reason } ],
       usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } }
   end
 
@@ -103,8 +103,8 @@ class FakeOpenAIServer
 
   def stream(socket, model, text)
     socket.write "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
-    events = text.split.map { |word| { model: model, choices: [{ index: 0, delta: { content: "#{word} " } }] } }
-    events << { model: model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+    events = text.split.map { |word| { model: model, choices: [ { index: 0, delta: { content: "#{word} " } } ] } }
+    events << { model: model, choices: [ { index: 0, delta: {}, finish_reason: "stop" } ] }
     events << { model: model, choices: [], usage: { prompt_tokens: 3, completion_tokens: events.size - 1 } }
     events.each { |e| chunk(socket, "data: #{JSON.generate(e)}\n\n") }
     chunk(socket, "data: [DONE]\n\n")

@@ -34,7 +34,7 @@ class MessageTest < Minitest::Test
   end
 
   def test_message_with_tool_calls
-    tool_calls = [{ id: "call_1", name: "search", arguments: { query: "test" } }]
+    tool_calls = [ { id: "call_1", name: "search", arguments: { query: "test" } } ]
     msg = Ragents::Message.assistant("Let me search", tool_calls: tool_calls)
 
     assert msg.has_tool_calls?

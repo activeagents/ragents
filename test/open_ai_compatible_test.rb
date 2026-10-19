@@ -33,7 +33,7 @@ class OpenAICompatibleTest < Minitest::Test
   end
 
   def test_generate_sends_messages_tools_and_headers
-    response = @provider.generate(messages: [{ role: "user", content: "hi" }], tools: EchoAgent.tools)
+    response = @provider.generate(messages: [ { role: "user", content: "hi" } ], tools: EchoAgent.tools)
 
     assert_predicate response, :has_tool_calls?
     assert_equal :echo, response.tool_calls.first.name
@@ -72,10 +72,10 @@ class OpenAICompatibleTest < Minitest::Test
   end
 
   def test_keeps_connections_alive_per_ractor
-    3.times { @provider.generate(messages: [{ role: "user", content: "x" }]) }
+    3.times { @provider.generate(messages: [ { role: "user", content: "x" } ]) }
     assert_equal 1, @server.connections
 
-    Ractor.new(@provider) { |p| 3.times { p.generate(messages: [{ role: "user", content: "y" }]) } }.join
+    Ractor.new(@provider) { |p| 3.times { p.generate(messages: [ { role: "user", content: "y" } ]) } }.join
     assert_equal 2, @server.connections
   end
 
@@ -84,15 +84,15 @@ class OpenAICompatibleTest < Minitest::Test
     @server = FakeOpenAIServer.new(close_after_response: true)
     provider = provider()
 
-    3.times { |i| assert_equal "echo: #{i}", provider.generate(messages: [{ role: "user", content: i.to_s }]).content }
+    3.times { |i| assert_equal "echo: #{i}", provider.generate(messages: [ { role: "user", content: i.to_s } ]).content }
     assert_equal 3, @server.connections
   end
 
   def test_streams_text_deltas_and_usage
     deltas = []
-    response = @provider.stream(messages: [{ role: "user", content: "one two three" }]) { |d| deltas << d }
+    response = @provider.stream(messages: [ { role: "user", content: "one two three" } ]) { |d| deltas << d }
 
-    assert_equal ["one ", "two ", "three "], deltas
+    assert_equal [ "one ", "two ", "three " ], deltas
     assert_equal "one two three ", response.content
     assert_equal "stop", response.finish_reason
     assert_equal 3, response.usage["completion_tokens"]
@@ -103,7 +103,7 @@ class OpenAICompatibleTest < Minitest::Test
     deltas = []
     content = pool.call(StreamJob, :run, @provider, "a b c") { |d| deltas << d }
 
-    assert_equal ["a ", "b ", "c "], deltas
+    assert_equal [ "a ", "b ", "c " ], deltas
     assert_equal "a b c ", content
   ensure
     pool&.shutdown
@@ -111,7 +111,7 @@ class OpenAICompatibleTest < Minitest::Test
 
   module StreamJob
     def self.run(provider, text, &emit)
-      provider.stream(messages: [{ role: "user", content: text }], &emit).content
+      provider.stream(messages: [ { role: "user", content: text } ], &emit).content
     end
   end
 
@@ -127,13 +127,13 @@ class OpenAICompatibleTest < Minitest::Test
   end
 
   def test_no_authorization_header_without_a_key
-    provider_for("fake-model").generate(messages: [{ role: "user", content: "x" }])
+    provider_for("fake-model").generate(messages: [ { role: "user", content: "x" } ])
     refute @server.received.last[:headers].key?("authorization")
   end
 
   def test_openrouter_preset_adds_usage_accounting
     openrouter = Ragents::Providers::OpenAICompatible.openrouter(model: "some/model", api_key: "k", base_url: @server.base_url)
-    openrouter.generate(messages: [{ role: "user", content: "x" }])
+    openrouter.generate(messages: [ { role: "user", content: "x" } ])
 
     assert_equal({ "include" => true }, @server.received.last[:body]["usage"])
   end

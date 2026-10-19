@@ -49,7 +49,7 @@ class PoolTest < Minitest::Test
   def test_continues_a_conversation_from_a_given_context
     provider = Ragents::Providers::Test.new
     provider.stub_response(content: "second")
-    first = Ragents::Context.new(messages: [Ragents::Message.user("one"), Ragents::Message.assistant("first")])
+    first = Ragents::Context.new(messages: [ Ragents::Message.user("one"), Ragents::Message.assistant("first") ])
 
     context = @pool.run(EchoAgent, provider: provider, context: first, input: "two")
 
@@ -62,7 +62,7 @@ class PoolTest < Minitest::Test
   end
 
   def test_jobs_spread_across_worker_ractors
-    jobs = Array.new(8) { @pool.send(:enqueue, :call, Jobs, [:whoami], {}) }
+    jobs = Array.new(8) { @pool.send(:enqueue, :call, Jobs, [ :whoami ], {}) }
     names = jobs.map(&:value).uniq.sort
 
     assert_equal %w[test-0 test-1], names
@@ -70,19 +70,19 @@ class PoolTest < Minitest::Test
 
   def test_submit_does_not_block_when_workers_are_busy
     started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    jobs = Array.new(6) { @pool.send(:enqueue, :call, Jobs, [:nap, 0.1], {}) }
+    jobs = Array.new(6) { @pool.send(:enqueue, :call, Jobs, [ :nap, 0.1 ], {}) }
     submitted = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
 
     assert_operator submitted, :<, 0.05
-    assert_equal [0.1] * 6, jobs.map(&:value)
+    assert_equal [ 0.1 ] * 6, jobs.map(&:value)
   end
 
   def test_emitted_values_are_yielded_in_order_on_the_caller
     seen = []
-    result = @pool.call(Jobs, :count_to, 5) { |i| seen << [i, Thread.current] }
+    result = @pool.call(Jobs, :count_to, 5) { |i| seen << [ i, Thread.current ] }
 
     assert_equal :counted, result
-    assert_equal [1, 2, 3, 4, 5], seen.map(&:first)
+    assert_equal [ 1, 2, 3, 4, 5 ], seen.map(&:first)
     assert(seen.all? { |_, thread| thread == Thread.current })
   end
 
@@ -130,7 +130,7 @@ class PoolTest < Minitest::Test
     end.join
 
     # If the pool blocked the thread, the ticker could only finish afterwards.
-    assert_equal %i[ticker_done pool_job_done], [events.pop, events.pop]
+    assert_equal %i[ticker_done pool_job_done], [ events.pop, events.pop ]
   end
 
   def test_many_fibers_share_one_thread
@@ -149,17 +149,17 @@ class PoolTest < Minitest::Test
     orchestrator = Ragents::Orchestrator.new(provider: provider, pool: @pool)
     orchestrator.register(:echo, EchoAgent)
 
-    results = orchestrator.parallel([:echo, { input: "a" }], [:echo, { input: "b" }], [:echo, { input: "c" }])
+    results = orchestrator.parallel([ :echo, { input: "a" } ], [ :echo, { input: "b" } ], [ :echo, { input: "c" } ])
 
-    assert_equal ["pooled"] * 3, results.map { |c| c.last_message.content }
+    assert_equal [ "pooled" ] * 3, results.map { |c| c.last_message.content }
   end
 
   def test_shutdown_finishes_submitted_jobs_then_refuses_new_ones
     pool = Ragents::Pool.new(size: 1, threads: 1)
-    jobs = Array.new(3) { pool.send(:enqueue, :call, Jobs, [:nap, 0.05], {}) }
+    jobs = Array.new(3) { pool.send(:enqueue, :call, Jobs, [ :nap, 0.05 ], {}) }
     pool.shutdown
 
-    assert_equal [0.05] * 3, jobs.map(&:value)
+    assert_equal [ 0.05 ] * 3, jobs.map(&:value)
     assert_raises(Ragents::Pool::ShutdownError) { pool.call(Jobs, :add, 1, 2) }
     assert_nil pool.shutdown
   end

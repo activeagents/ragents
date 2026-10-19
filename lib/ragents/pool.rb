@@ -111,19 +111,19 @@ module Ragents
             Thread.new do
               while (job = inbox.receive) != :stop
                 id, kind, target, args, kwargs = job
-                emit = ->(value) { replies << [:emit, id, value] }
+                emit = ->(value) { replies << [ :emit, id, value ] }
                 begin
                   result = Worker.perform(kind, target, args, kwargs, &emit)
                   # A Context is frozen by design, so it is shared rather than
                   # copied; other values are copied back.
-                  replies << [:ok, id, kind == :agent ? Ractor.make_shareable(result) : result]
+                  replies << [ :ok, id, kind == :agent ? Ractor.make_shareable(result) : result ]
                 rescue Exception => e # rubocop:disable Lint/RescueException -- report every failure; a dead thread would lose its slot
                   # The exception is copied back as the RemoteError's cause
                   # (copies lose their backtrace, so it travels alongside).
                   begin
-                    replies << [:error, id, [Pool.describe(e), e, e.backtrace]]
+                    replies << [ :error, id, [ Pool.describe(e), e, e.backtrace ] ]
                   rescue StandardError
-                    replies << [:error, id, [Pool.describe(e), nil, e.backtrace]]
+                    replies << [ :error, id, [ Pool.describe(e), nil, e.backtrace ] ]
                   end
                 end
               end
@@ -132,7 +132,7 @@ module Ragents
           worker_threads.each(&:join)
           :stopped
         end
-        [ractor, boot.receive]
+        [ ractor, boot.receive ]
       end
       # Interleave the slots so the first jobs spread across Ractors.
       @threads.times { @workers.each { |_ractor, inbox| @free << inbox } }
@@ -160,7 +160,7 @@ module Ragents
     def call(mod, method_name, *args, **kwargs, &on_emit)
       raise ArgumentError, "#{mod.inspect} must be a Module (modules are shareable)" unless mod.is_a?(Module)
 
-      enqueue(:call, mod, [method_name.to_sym, *args], kwargs).value(&on_emit)
+      enqueue(:call, mod, [ method_name.to_sym, *args ], kwargs).value(&on_emit)
     end
 
     # Stops accepting jobs, lets every submitted job finish, then stops the
@@ -179,7 +179,7 @@ module Ragents
       @replies << :drained
       @collector.join
       leftovers = @lock.synchronize { @jobs.values.tap { @jobs.clear } }
-      leftovers.each { |job| job.push([:shutdown, nil]) }
+      leftovers.each { |job| job.push([ :shutdown, nil ]) }
       nil
     end
 
@@ -202,7 +202,7 @@ module Ragents
 
         @seq += 1
         @jobs[@seq] = job
-        @pending << [@seq, kind, target, args, kwargs]
+        @pending << [ @seq, kind, target, args, kwargs ]
       end
       job
     end
@@ -217,7 +217,7 @@ module Ragents
           inbox << job
         rescue StandardError => e
           # The job's arguments couldn't be copied into the worker.
-          finish(id, :error, ["can't send job to a worker Ractor (#{Pool.describe(e)})", nil, nil])
+          finish(id, :error, [ "can't send job to a worker Ractor (#{Pool.describe(e)})", nil, nil ])
         end
       end
     end
@@ -226,7 +226,7 @@ module Ragents
       while (reply = @replies.receive) != :drained
         kind, id, payload = reply
         if kind == :emit
-          @lock.synchronize { @jobs[id] }&.push([kind, payload])
+          @lock.synchronize { @jobs[id] }&.push([ kind, payload ])
         else
           finish(id, kind, payload)
         end
@@ -234,9 +234,9 @@ module Ragents
     end
 
     def finish(id, kind, payload)
-      job, inbox = @lock.synchronize { [@jobs.delete(id), @slots.delete(id)] }
+      job, inbox = @lock.synchronize { [ @jobs.delete(id), @slots.delete(id) ] }
       @free << inbox if inbox
-      job&.push([kind, payload])
+      job&.push([ kind, payload ])
     end
   end
 end

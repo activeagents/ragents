@@ -21,7 +21,7 @@ class TestScheduler
   def block(_blocker, timeout = nil)
     fiber = Fiber.current
     if timeout
-      @timers << [now + timeout, fiber]
+      @timers << [ now + timeout, fiber ]
     else
       @blocked[fiber] = true
     end
@@ -33,13 +33,13 @@ class TestScheduler
 
   # May be called from other threads.
   def unblock(_blocker, fiber)
-    Fiber.blocking { @lock.synchronize { @unblocked << [fiber, nil] } }
+    Fiber.blocking { @lock.synchronize { @unblocked << [ fiber, nil ] } }
     @wake_w.write_nonblock(".", exception: false)
   end
 
   # Required by Fiber.set_scheduler from Ruby 4.1: raise in a waiting fiber.
   def fiber_interrupt(fiber, exception)
-    Fiber.blocking { @lock.synchronize { @unblocked << [fiber, exception] } }
+    Fiber.blocking { @lock.synchronize { @unblocked << [ fiber, exception ] } }
     @wake_w.write_nonblock(".", exception: false)
   end
 
@@ -51,8 +51,8 @@ class TestScheduler
   # waits on the calling thread.
   def io_wait(io, events, timeout)
     Fiber.blocking do
-      readers = (events & IO::READABLE).zero? ? nil : [io]
-      writers = (events & IO::WRITABLE).zero? ? nil : [io]
+      readers = (events & IO::READABLE).zero? ? nil : [ io ]
+      writers = (events & IO::WRITABLE).zero? ? nil : [ io ]
       IO.select(readers, writers, nil, timeout) ? events : false
     end
   end
@@ -69,7 +69,7 @@ class TestScheduler
     loop do
       wake_unblocked
       due, @timers = @timers.partition { |at, _| at <= now }
-      @ready.concat(due.map { |_, fiber| [fiber, nil] })
+      @ready.concat(due.map { |_, fiber| [ fiber, nil ] })
       until @ready.empty?
         fiber, exception = @ready.shift
         next unless fiber.alive?
@@ -80,8 +80,8 @@ class TestScheduler
       next unless @ready.empty?
       break if @timers.empty? && @blocked.empty?
 
-      timeout = @timers.empty? ? nil : [@timers.map(&:first).min - now, 0].max
-      IO.select([@wake_r], nil, nil, timeout)
+      timeout = @timers.empty? ? nil : [ @timers.map(&:first).min - now, 0 ].max
+      IO.select([ @wake_r ], nil, nil, timeout)
       @wake_r.read_nonblock(4096, exception: false)
     end
   end
@@ -91,7 +91,7 @@ class TestScheduler
     entries.each do |fiber, exception|
       @blocked.delete(fiber)
       @timers.reject! { |_, f| f.equal?(fiber) }
-      @ready << [fiber, exception]
+      @ready << [ fiber, exception ]
     end
   end
 
