@@ -94,6 +94,7 @@ require_relative "ragents/tool"
 require_relative "ragents/provider"
 require_relative "ragents/agent"
 require_relative "ragents/orchestrator"
+require_relative "ragents/pool"
 
 # Optional Rails integration (only loaded if Rails is present)
 if defined?(Rails::Railtie)

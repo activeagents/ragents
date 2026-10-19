@@ -24,10 +24,13 @@ module Ragents
   #   end
   #
   class Orchestrator
-    attr_reader :provider, :agents, :contexts
+    attr_reader :provider, :agents, :contexts, :pool
 
-    def initialize(provider: nil, **options)
+    # @param pool [Ragents::Pool, nil] when given, #parallel runs agents on
+    #   the pool's long-lived Ractors instead of spawning one per agent
+    def initialize(provider: nil, pool: nil, **options)
       @provider = provider
+      @pool = pool
       @agents = {}
       @contexts = {}
       @options = options
@@ -56,7 +59,7 @@ module Ragents
     # @param tasks [Array<Array>] Array of [name, options] tuples
     # @return [Array<Context>] Results from all agents
     def parallel(*tasks)
-      ractors = tasks.map do |(name, opts)|
+      runs = tasks.map do |(name, opts)|
         opts ||= {}
         agent_config = @agents[name.to_sym]
         raise ArgumentError, "Unknown agent: #{name}" unless agent_config
@@ -66,16 +69,15 @@ module Ragents
         context = merged_opts.delete(:context)
         input = merged_opts.delete(:input)
 
-        agent_class.run_async(
-          provider: @provider,
-          context: context,
-          input: input,
-          **merged_opts
-        )
+        if @pool
+          @pool.submit(agent_class, provider: @provider, context: context, input: input, **merged_opts)
+        else
+          agent_class.run_async(provider: @provider, context: context, input: input, **merged_opts)
+        end
       end
 
-      # Collect results from all Ractors (Ruby 4.x API)
-      ractors.map(&:value)
+      # Ractor#value (Ruby 4.x) or Pool::Job#value
+      runs.map(&:value)
     end
 
     # Execute a sequential workflow
