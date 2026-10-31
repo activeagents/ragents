@@ -146,7 +146,9 @@ tool.to_json_schema
 
 ### Provider (RubyLLM)
 
-Access 500+ models through RubyLLM:
+Access 500+ models through RubyLLM (main Ractor only; see
+[Running Agents in Ractors](#running-agents-in-ractors) for a provider that
+works inside Ractors):
 
 ```ruby
 # OpenAI models
@@ -207,27 +209,61 @@ result = orchestrator.supervised(:researcher,
 )
 ```
 
-### Ractor-Based Parallelism
+### Running Agents in Ractors
 
-Run agents in isolated Ractors using Ruby 4.x APIs:
+When an agent class is defined, ragents also makes a frozen, shareable copy of
+its prompt and tools for other Ractors; the definitions themselves are left as
+they are. Any agent whose blocks don't keep mutable state (outer variables, or
+instance variables a tool assigns) can run in a Ractor. Use a provider that can
+cross into Ractors: `Providers::OpenAICompatible` is shareable.
+(`Providers::RubyLLM` keeps its configuration in module state that only the
+main Ractor can read.)
 
 ```ruby
-# Async execution
-ractor = ResearchAgent.run_async(
-  provider: provider,
-  input: "Research task"
+provider = Ragents::Providers::OpenAICompatible.new(model: "gpt-4o-mini") # OPENAI_API_KEY
+provider = Ragents::Providers::OpenAICompatible.openrouter(model: "anthropic/claude-haiku-5.5")
+provider = Ragents::Providers::OpenAICompatible.new(
+  model: "llama3.2", base_url: "http://localhost:11434/v1", api_key: nil # Ollama, vLLM, LM Studio...
 )
 
-# Do other work while agent runs...
-
-# Get result when ready (Ruby 4.x uses #value instead of #take)
+# One Ractor per run (Ruby 4.x uses #value instead of #take)
+ractor = ResearchAgent.run_async(provider: provider, input: "Research task")
 result = ractor.value
+result = ResearchAgent.run_in_ractor(provider: provider, input: "Research task")
 
-# Or use the synchronous helper
-result = ResearchAgent.run_in_ractor(
-  provider: provider,
-  input: "Research task"
-)
+ResearchAgent.ractor_safe?          # => true
+ResearchAgent.ractor_unsafe_reasons # => [] (or what keeps it on the main Ractor)
+```
+
+For a server, keep workers alive with a pool instead of spawning a Ractor per
+run. Waiting on the pool yields to a Fiber scheduler, so it is safe from
+Falcon or Async request handlers:
+
+```ruby
+pool = Ragents::Pool.new(size: Etc.nprocessors, threads: 8)
+
+context = pool.run(ResearchAgent, provider: provider, input: "Topic A")
+jobs    = %w[A B C].map { |t| pool.submit(ResearchAgent, provider: provider, input: "Topic #{t}") }
+results = jobs.map(&:value)
+
+# Any module function, e.g. CPU-heavy tool work; emitted values stream back
+pool.call(Ranker, :rank, query)
+pool.call(Narrator, :narrate, provider, prompt) { |delta| stream << delta }
+
+orchestrator = Ragents::Orchestrator.new(provider: provider, pool: pool)
+pool.shutdown # waits for submitted jobs
+```
+
+Conversation state needs no sharing: a `Context` is frozen, so it goes into a
+run and a new one comes back. For mutable memory that agents in different
+Ractors write to, use a `Ragents::Store`, which owns the data in its own
+Ractor:
+
+```ruby
+memory = Ragents::Store.new
+memory.append(:facts, "The user prefers Ruby")
+pool.call(Notes, :remember, memory, "another fact")   # the store itself is shareable
+memory.update(:visits) { |n| (n || 0) + 1 }           # atomic
 ```
 
 ## Configuration
@@ -301,7 +337,7 @@ Ragents is designed to complement Active Agent - use Ragents for complex multi-a
 
 ## Requirements
 
-- Ruby 4.0+ (4.1 recommended for latest Ractor improvements)
+- Ruby 4.0+
 - ruby_llm gem (automatically installed)
 
 ## Contributing

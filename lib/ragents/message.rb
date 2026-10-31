@@ -89,7 +89,7 @@ module Ragents
     alias eql? ==
 
     def hash
-      [role, content, tool_calls, tool_call_id, name].hash
+      [ role, content, tool_calls, tool_call_id, name ].hash
     end
 
     # Make Ractor-shareable

@@ -102,11 +102,12 @@ module Ragents
       def attach_tools(chat, tools)
         return if tools.nil? || tools.empty?
 
-        tool_list = case tools
-                    when ToolRegistry then tools.to_a
-                    when Array then tools
-                    else []
-                    end
+        tool_list =
+          case tools
+          when ToolRegistry then tools.to_a
+          when Array then tools
+          else []
+          end
 
         tool_list.each do |tool|
           ruby_llm_tool = build_ruby_llm_tool(tool)

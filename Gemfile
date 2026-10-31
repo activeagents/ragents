@@ -6,6 +6,7 @@ gemspec
 group :development, :test do
   gem "rubocop", require: false
   gem "rubocop-minitest", require: false
+  gem "rubocop-rails-omakase", require: false # .rubocop.yml inherits its config
   gem "debug", ">= 1.0.0"
 end
 
